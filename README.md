@@ -2,6 +2,11 @@
 
 A wallet connector with mobile WalletConnect support for the Cosmos ecosystem.
 
+> **Warning**
+> This library is no longer being actively maintained. I recommended using
+> [CosmosKit](https://github.com/cosmology-tech/cosmos-kit) instead, which is
+> actively maintained and supports many more wallets.
+
 ## Example
 
 The example is deployed on Vercel at https://cosmodal-noahsaso.vercel.app/
