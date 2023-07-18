@@ -8,7 +8,6 @@ import {
 } from "react"
 
 import {
-  ConnectedWallet,
   ConnectWalletToChainFunction,
   IWalletManagerContext,
   UseWalletResponse,
@@ -36,6 +35,8 @@ export const useWallet = (
     status: managerStatus,
     error: managerError,
     connectedWallet: managerConnectedWallet,
+    connectedWallets,
+    addConnectedWallet,
     chainInfoOverrides,
     getSigningCosmWasmClientOptions,
     getSigningStargateClientOptions,
@@ -47,34 +48,35 @@ export const useWallet = (
     managerStatus === WalletConnectionStatus.Connected &&
     !!managerConnectedWallet &&
     !!chainId
-  const [chainIdStatus, setChainIdStatus] = useState<WalletConnectionStatus>(
-    WalletConnectionStatus.Initializing
-  )
 
+  const [chainIdConnecting, setChainIdConnecting] = useState(false)
   const [chainIdError, setChainIdError] = useState<unknown>()
-  const [chainIdConnectedWallet, setChainIdConnectedWallet] =
-    useState<ConnectedWallet>()
+  const chainIdConnectedWallet = shouldConnectToChainId
+    ? connectedWallets[chainId]
+    : undefined
   useEffect(() => {
     // If should not connect, already connecting, or already connected, do
     // nothing.
     if (
       !shouldConnectToChainId ||
-      chainIdStatus === WalletConnectionStatus.Connecting ||
-      chainIdStatus === WalletConnectionStatus.Connected
+      chainIdConnecting ||
+      !!chainIdConnectedWallet
     ) {
       return
     }
 
     // Try to connect.
-    const connect = async () => {
-      setChainIdStatus(WalletConnectionStatus.Connecting)
-      setChainIdConnectedWallet(undefined)
+    ;(async () => {
+      setChainIdConnecting(true)
       setChainIdError(undefined)
 
       try {
         const chainInfo = await getChainInfo(chainId, chainInfoOverrides)
 
-        setChainIdConnectedWallet(
+        // Store connected wallet for chain ID so we can load it from other
+        // hooks instantly.
+        addConnectedWallet(
+          chainId,
           await getConnectedWalletInfo(
             managerConnectedWallet.wallet,
             managerConnectedWallet.walletClient,
@@ -83,14 +85,13 @@ export const useWallet = (
             await getSigningStargateClientOptions?.(chainInfo)
           )
         )
-        setChainIdStatus(WalletConnectionStatus.Connected)
       } catch (error) {
         console.error(error)
         setChainIdError(error)
+      } finally {
+        setChainIdConnecting(false)
       }
-    }
-
-    connect()
+    })()
   }, [
     managerStatus,
     managerConnectedWallet,
@@ -99,30 +100,31 @@ export const useWallet = (
     getSigningStargateClientOptions,
     chainInfoOverrides,
     shouldConnectToChainId,
-    chainIdStatus,
+    addConnectedWallet,
+    chainIdConnecting,
+    chainIdConnectedWallet,
   ])
 
-  // If chainId wallet is connected and manager wallet changes status away from
-  // connected, reset so that we reconnect once manager reconnects. This ensures
-  // that we disconnect when the manager disconnects, and update accounts when
-  // the manager changes accounts.
-  useEffect(() => {
-    if (
-      !!chainId &&
-      !!chainIdConnectedWallet &&
-      chainIdStatus === WalletConnectionStatus.Connected &&
-      managerStatus !== WalletConnectionStatus.Connected
-    ) {
-      setChainIdStatus(WalletConnectionStatus.Initializing)
-      setChainIdError(undefined)
-      setChainIdConnectedWallet(undefined)
-    }
-  }, [managerStatus, chainId, chainIdStatus, chainIdConnectedWallet])
-
-  const status = shouldConnectToChainId ? chainIdStatus : managerStatus
+  const status = shouldConnectToChainId
+    ? // If manager is connected...
+      managerStatus === WalletConnectionStatus.Connected
+      ? // ...and chain ID wallet is connected,
+        chainIdConnectedWallet
+        ? // then we're connected.
+          WalletConnectionStatus.Connected
+        : // ...or chain ID wallet is still connecting,
+        chainIdConnecting
+        ? // then we're still connecting.
+          WalletConnectionStatus.Connecting
+        : // ...or if not connecting, then we probably have an error.
+          WalletConnectionStatus.ReadyForConnection
+      : // otherwise, manager is not connected and we can pass status through.
+        managerStatus
+    : // If we're not connecting to chain ID, then we can pass status through.
+      managerStatus
   const connected = status === WalletConnectionStatus.Connected
   const error = shouldConnectToChainId ? chainIdError : managerError
-  const connectedWallet = chainId
+  const connectedWallet = shouldConnectToChainId
     ? chainIdConnectedWallet
     : managerConnectedWallet
 

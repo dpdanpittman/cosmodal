@@ -16,6 +16,7 @@ import {
   ChainInfoOverrides,
   ConnectedWallet,
   DefaultUiConfig,
+  IWalletManagerContext,
   SigningClientGetter,
   UiProps,
   Wallet,
@@ -107,7 +108,10 @@ export const WalletManagerProvider: FunctionComponent<
   const onManualQrCloseCallback = useRef<() => void>()
 
   // Wallet connection state
-  const [connectedWallet, setConnectedWallet] = useState<ConnectedWallet>()
+  // Map chain ID to connected wallet.
+  const [connectedWallets, setConnectedWallets] = useState<
+    Record<string, ConnectedWallet>
+  >({})
   const [error, setError] = useState<unknown>()
   // Once mobile web is checked, we are ready to auto-connect.
   const [status, setStatus] = useState<WalletConnectionStatus>(
@@ -131,13 +135,17 @@ export const WalletManagerProvider: FunctionComponent<
 
   // Disconnect from connected wallet.
   const disconnect = useCallback(() => {
-    // Disconnect client if it exists. Log and ignore errors.
-    connectedWallet?.walletClient
-      ?.disconnect?.()
-      ?.catch((err) => console.error("Error disconnecting wallet client", err))
+    // Disconnect clients if exist. Log and ignore errors.
+    Object.values(connectedWallets).map(({ walletClient }) =>
+      walletClient
+        ?.disconnect?.()
+        ?.catch((err) =>
+          console.error("Error disconnecting wallet client", err)
+        )
+    )
 
-    // Disconnect wallet.
-    setConnectedWallet(undefined)
+    // Disconnect wallets.
+    setConnectedWallets({})
     setStatus(WalletConnectionStatus.ReadyForConnection)
 
     // Clear WalletConnect state.
@@ -148,7 +156,7 @@ export const WalletManagerProvider: FunctionComponent<
     if (localStorageKey) {
       localStorage.removeItem(localStorageKey)
     }
-  }, [localStorageKey, connectedWallet])
+  }, [localStorageKey, connectedWallets])
 
   // Obtain WalletConnect if necessary, and connect to the wallet.
   const connectToWallet = useCallback(
@@ -182,16 +190,16 @@ export const WalletManagerProvider: FunctionComponent<
           walletClient.dontOpenAppOnEnable = !!newWcSession
         }
 
-        // Save connected wallet data.
-        setConnectedWallet(
-          await getConnectedWalletInfo(
+        // Save connected wallet data. Clears other connected wallets.
+        setConnectedWallets({
+          [defaultChainId]: await getConnectedWalletInfo(
             wallet,
             walletClient,
             chainInfo,
             await getSigningCosmWasmClientOptions?.(chainInfo),
             await getSigningStargateClientOptions?.(chainInfo)
-          )
-        )
+          ),
+        })
 
         // Allow future WC enable requests to open the app.
         if (walletClient instanceof KeplrWalletConnectV1) {
@@ -305,6 +313,7 @@ export const WalletManagerProvider: FunctionComponent<
       walletConnect,
       getDefaultChainInfo,
       walletOptions,
+      defaultChainId,
       getSigningCosmWasmClientOptions,
       getSigningStargateClientOptions,
       localStorageKey,
@@ -499,39 +508,53 @@ export const WalletManagerProvider: FunctionComponent<
   useEffect(() => {
     if (
       // Only run this on a browser.
-      typeof window === "undefined" ||
-      // Only run this if we are connected to a wallet that has a keystore chang
-      // event specified.
-      !connectedWallet?.wallet.windowKeystoreRefreshEvent
+      typeof window === "undefined"
     ) {
       return
     }
 
-    const { windowKeystoreRefreshEvent } = connectedWallet.wallet
+    const windowKeystoreRefreshEvents = Object.values(connectedWallets)
+      .map(({ wallet }) => wallet.windowKeystoreRefreshEvent)
+      .filter((event): event is string => !!event)
+    // Only run this if we are connected to a wallet that has a keystore change
+    // event specified.
+    if (windowKeystoreRefreshEvents.length === 0) {
+      return
+    }
 
     const listener = async (event: Event) => {
       // Reconnect to wallet, since name/address may have changed.
-      if (status === WalletConnectionStatus.Connected && connectedWallet) {
-        connectToWallet(connectedWallet.wallet)
+      if (status === WalletConnectionStatus.Connected) {
+        connectToWallet(connectedWallets[defaultChainId].wallet)
       }
 
       // Execute callback if passed.
       onKeystoreChangeEvent?.(event)
     }
 
-    // Add event listener.
-    window.addEventListener(windowKeystoreRefreshEvent, listener)
+    // Add event listeners.
+    Array.from(new Set(windowKeystoreRefreshEvents)).map((event) =>
+      window.addEventListener(event, listener)
+    )
 
-    // Remove event listener on clean up.
+    // Remove event listeners on clean up.
     return () => {
-      window.removeEventListener(windowKeystoreRefreshEvent, listener)
+      Array.from(new Set(windowKeystoreRefreshEvents)).map((event) =>
+        window.removeEventListener(event, listener)
+      )
     }
-  }, [onKeystoreChangeEvent, connectedWallet, status, connectToWallet])
+  }, [
+    onKeystoreChangeEvent,
+    status,
+    connectToWallet,
+    connectedWallets,
+    defaultChainId,
+  ])
 
   const uiProps = useMemo(
     (): UiProps => ({
       connectToWallet,
-      connectedWallet,
+      connectedWallet: connectedWallets[defaultChainId],
       connectingWallet,
       defaultUiConfig,
       disconnect,
@@ -543,8 +566,9 @@ export const WalletManagerProvider: FunctionComponent<
     }),
     [
       connectToWallet,
-      connectedWallet,
+      connectedWallets,
       connectingWallet,
+      defaultChainId,
       defaultUiConfig,
       disconnect,
       enabledWallets,
@@ -557,10 +581,16 @@ export const WalletManagerProvider: FunctionComponent<
 
   // Memoize context data.
   const value = useMemo(
-    () => ({
+    (): IWalletManagerContext => ({
       connect: beginConnection,
       disconnect,
-      connectedWallet,
+      connectedWallet: connectedWallets[defaultChainId],
+      connectedWallets,
+      addConnectedWallet: (chainId, wallet) =>
+        setConnectedWallets((prev) => ({
+          ...prev,
+          [chainId]: wallet,
+        })),
       status,
       connected: status === WalletConnectionStatus.Connected,
       error,
@@ -573,7 +603,8 @@ export const WalletManagerProvider: FunctionComponent<
     [
       beginConnection,
       chainInfoOverrides,
-      connectedWallet,
+      connectedWallets,
+      defaultChainId,
       disconnect,
       error,
       getSigningCosmWasmClientOptions,

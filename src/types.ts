@@ -116,6 +116,13 @@ export interface IWalletManagerContext {
   disconnect: () => void
   // Connected wallet info and clients for interacting with the chain.
   connectedWallet?: ConnectedWallet
+  // Map chain ID to connected wallet for that chain.
+  connectedWallets: Record<string, ConnectedWallet>
+  // Store a new connected wallet for retrieval.
+  addConnectedWallet: (
+    chainId: string,
+    connectedWallet: ConnectedWallet
+  ) => void
   // Status of cosmodal.
   status: WalletConnectionStatus
   // If status is WalletConnectionStatus.Connected.
