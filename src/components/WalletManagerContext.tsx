@@ -112,11 +112,11 @@ export const useWallet = (
         chainIdConnectedWallet
         ? // then we're connected.
           WalletConnectionStatus.Connected
-        : // ...or chain ID wallet is still connecting,
-        chainIdConnecting
+        : // ...or chain ID wallet is still connecting or there is no error. Need to check if there is no error because there is one render between the connecting flag being unset and the connected wallets state being updated.
+        chainIdConnecting || !chainIdError
         ? // then we're still connecting.
           WalletConnectionStatus.Connecting
-        : // ...or if not connecting, then we probably have an error.
+        : // ...otherwise we have an error.
           WalletConnectionStatus.ReadyForConnection
       : // otherwise, manager is not connected and we can pass status through.
         managerStatus
